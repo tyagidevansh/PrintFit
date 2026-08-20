@@ -1,0 +1,297 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  ArrowRight,
+  Check,
+  FileDown,
+  ImagePlus,
+  LoaderCircle,
+  LockKeyhole,
+  RotateCcw,
+  Sparkles,
+  Trash2,
+  X,
+} from 'lucide-react'
+import { createLayouts } from './layout'
+import { exportPdf } from './pdf'
+import type { MarginPreset, Photo } from './types'
+
+const MARGINS: Record<MarginPreset, { label: string; value: number; note: string }> = {
+  normal: { label: 'Normal', value: 12.7, note: 'Safe for every printer' },
+  narrow: { label: 'Narrow', value: 6.35, note: 'More room, usually safe' },
+  danger: { label: 'Dangerously narrow', value: 3, note: 'Check your printer first' },
+}
+
+const SIZE_OPTIONS = [
+  { value: 2, label: '½ page' },
+  { value: 4, label: '¼ page' },
+  { value: 6, label: '⅙ page' },
+  { value: 8, label: '⅛ page' },
+  { value: 12, label: '¹⁄₁₂ page' },
+]
+
+function readPhoto(file: File): Promise<Photo> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file)
+    const image = new Image()
+    image.onload = () =>
+      resolve({
+        id: `${file.name}-${file.lastModified}-${file.size}-${crypto.randomUUID()}`,
+        file,
+        url,
+        width: image.naturalWidth,
+        height: image.naturalHeight,
+        aspect: image.naturalWidth / image.naturalHeight,
+      })
+    image.onerror = () => {
+      URL.revokeObjectURL(url)
+      reject(new Error(`${file.name} could not be read.`))
+    }
+    image.src = url
+  })
+}
+
+function App() {
+  const [photos, setPhotos] = useState<Photo[]>([])
+  const [perPage, setPerPage] = useState(6)
+  const [marginPreset, setMarginPreset] = useState<MarginPreset>('narrow')
+  const [dragging, setDragging] = useState(false)
+  const [isExporting, setIsExporting] = useState(false)
+  const [progress, setProgress] = useState(0)
+  const [error, setError] = useState('')
+  const fileInput = useRef<HTMLInputElement>(null)
+  const photosRef = useRef<Photo[]>([])
+
+  useEffect(() => {
+    photosRef.current = photos
+  }, [photos])
+
+  useEffect(
+    () => () => {
+      photosRef.current.forEach((photo) => URL.revokeObjectURL(photo.url))
+    },
+    [],
+  )
+
+  const addFiles = useCallback(async (incoming: FileList | File[]) => {
+    const files = Array.from(incoming).filter((file) => file.type.startsWith('image/'))
+    if (!files.length) {
+      setError('Choose image files such as JPEG, PNG, or WebP.')
+      return
+    }
+
+    setError('')
+    const results = await Promise.allSettled(files.map(readPhoto))
+    const loaded = results.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []))
+    setPhotos((current) => [...current, ...loaded])
+    if (loaded.length !== files.length) setError(`${files.length - loaded.length} image${files.length - loaded.length === 1 ? '' : 's'} could not be read.`)
+  }, [])
+
+  const margin = MARGINS[marginPreset].value
+  const layouts = useMemo(() => createLayouts(photos, perPage, margin), [photos, perPage, margin])
+  const averageEfficiency = layouts.length
+    ? Math.round((layouts.reduce((sum, page) => sum + page.efficiency, 0) / layouts.length) * 100)
+    : 0
+
+  const removePhoto = (id: string) => {
+    setPhotos((current) => {
+      const target = current.find((photo) => photo.id === id)
+      if (target) URL.revokeObjectURL(target.url)
+      return current.filter((photo) => photo.id !== id)
+    })
+  }
+
+  const clearPhotos = () => {
+    photos.forEach((photo) => URL.revokeObjectURL(photo.url))
+    setPhotos([])
+  }
+
+  const handleExport = async () => {
+    if (!layouts.length || isExporting) return
+    setIsExporting(true)
+    setProgress(0)
+    setError('')
+    try {
+      await exportPdf(layouts, setProgress)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'The PDF could not be created.')
+    } finally {
+      setIsExporting(false)
+    }
+  }
+
+  return (
+    <main>
+      <header className="site-header">
+        <a className="brand" href="#top" aria-label="PrintFit home">
+          <span className="brand-mark" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </span>
+          PrintFit
+        </a>
+        <div className="privacy-pill"><LockKeyhole size={14} /> 100% on your device</div>
+      </header>
+
+      <section className="hero" id="top">
+        <div className="eyebrow"><Sparkles size={15} /> A tiny tool for expensive ink</div>
+        <h1>Make every<br /><em>sheet</em> count.</h1>
+        <p>Drop in your photos. PrintFit finds a space-saving arrangement, then makes a crisp A4 PDF—without uploading a single pixel.</p>
+        <button className="hero-cta" onClick={() => fileInput.current?.click()}>
+          Choose your photos <ArrowRight size={18} />
+        </button>
+        <div className="scribble" aria-hidden="true">less blank page<br />more good stuff ↗</div>
+      </section>
+
+      <section className="workspace" aria-label="Photo arrangement workspace">
+        <div className="controls-panel">
+          <div className="panel-heading">
+            <div>
+              <span className="step-number">01</span>
+              <h2>Add photos</h2>
+            </div>
+            {photos.length > 0 && <button className="text-button" onClick={clearPhotos}><Trash2 size={14} /> Clear</button>}
+          </div>
+
+          <div
+            className={`dropzone ${dragging ? 'is-dragging' : ''}`}
+            onDragEnter={(event) => { event.preventDefault(); setDragging(true) }}
+            onDragOver={(event) => event.preventDefault()}
+            onDragLeave={(event) => { if (event.currentTarget === event.target) setDragging(false) }}
+            onDrop={(event) => {
+              event.preventDefault()
+              setDragging(false)
+              void addFiles(event.dataTransfer.files)
+            }}
+            onClick={() => fileInput.current?.click()}
+          >
+            <input
+              ref={fileInput}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif,image/avif"
+              multiple
+              onChange={(event) => {
+                if (event.target.files) void addFiles(event.target.files)
+                event.target.value = ''
+              }}
+            />
+            <div className="upload-icon"><ImagePlus size={25} strokeWidth={1.7} /></div>
+            <strong>{dragging ? 'Drop them here' : 'Drop photos here'}</strong>
+            <span>or click to browse · JPG, PNG, WebP</span>
+          </div>
+
+          {photos.length > 0 && (
+            <div className="photo-strip">
+              {photos.map((photo, index) => (
+                <div className="photo-chip" key={photo.id}>
+                  <img src={photo.url} alt={photo.file.name} />
+                  <span>{index + 1}</span>
+                  <button onClick={() => removePhoto(photo.id)} aria-label={`Remove ${photo.file.name}`}><X size={12} /></button>
+                </div>
+              ))}
+              <button className="add-more" onClick={() => fileInput.current?.click()} aria-label="Add more photos"><ImagePlus size={20} /></button>
+            </div>
+          )}
+
+          <div className="setting-block">
+            <div className="setting-title"><span className="step-number">02</span><h2>Photo size</h2></div>
+            <p>About how much of a sheet should each photo use?</p>
+            <div className="segmented size-options">
+              {SIZE_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  className={perPage === option.value ? 'selected' : ''}
+                  onClick={() => setPerPage(option.value)}
+                >
+                  <span>{option.label}</span>
+                  <small>{option.value} / page</small>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="setting-block">
+            <div className="setting-title"><span className="step-number">03</span><h2>Page margins</h2></div>
+            <div className="margin-options">
+              {(Object.entries(MARGINS) as [MarginPreset, (typeof MARGINS)[MarginPreset]][]).map(([key, option]) => (
+                <button key={key} className={marginPreset === key ? 'selected' : ''} onClick={() => setMarginPreset(key)}>
+                  <span className="radio">{marginPreset === key && <Check size={12} strokeWidth={3} />}</span>
+                  <span><strong>{option.label}</strong><small>{option.value} mm · {option.note}</small></span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {error && <div className="error-message">{error}</div>}
+
+          <button className="export-button" onClick={handleExport} disabled={!photos.length || isExporting}>
+            {isExporting ? <LoaderCircle className="spinner" size={19} /> : <FileDown size={19} />}
+            {isExporting ? `Making PDF · ${Math.round(progress * 100)}%` : 'Download print-ready PDF'}
+          </button>
+          <p className="export-note">A4 · 180 DPI · Images stay on this device</p>
+        </div>
+
+        <div className="preview-panel">
+          <div className="preview-header">
+            <div>
+              <span className="preview-label">Live preview</span>
+              <h2>{photos.length ? `${layouts.length} A4 sheet${layouts.length === 1 ? '' : 's'}` : 'Your pages will appear here'}</h2>
+            </div>
+            {photos.length > 0 && (
+              <div className="efficiency"><span>{averageEfficiency}%</span><small>space filled</small></div>
+            )}
+          </div>
+
+          {!photos.length ? (
+            <div className="empty-preview">
+              <div className="empty-sheet">
+                <div /><div /><div /><div /><div /><div />
+              </div>
+              <h3>Ready when you are.</h3>
+              <p>Add two or more photos and watch the layout snap into place.</p>
+            </div>
+          ) : (
+            <div className="page-list">
+              {layouts.map((page, pageIndex) => (
+                <div className="page-wrap" key={`${pageIndex}-${perPage}-${marginPreset}`}>
+                  <div className="page-meta"><span>PAGE {String(pageIndex + 1).padStart(2, '0')}</span><span>{Math.round(page.efficiency * 100)}% FILLED</span></div>
+                  <div className="a4-page">
+                    {page.placements.map((placement) => (
+                      <div
+                        className="photo-placement"
+                        key={placement.photo.id}
+                        style={{
+                          left: `${(placement.x / 210) * 100}%`,
+                          top: `${(placement.y / 297) * 100}%`,
+                          width: `${(placement.width / 210) * 100}%`,
+                          height: `${(placement.height / 297) * 100}%`,
+                        }}
+                      >
+                        <img src={placement.photo.url} alt="" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {photos.length > 0 && (
+            <div className="optimizer-note">
+              <RotateCcw size={17} />
+              <div><strong>Best fit found</strong><span>Compared thousands of arrangements while keeping every photo uncropped.</span></div>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <footer>
+        <span>PrintFit</span>
+        <p>No accounts. No uploads. No nonsense.</p>
+        <span>Made for home printers</span>
+      </footer>
+    </main>
+  )
+}
+
+export default App
