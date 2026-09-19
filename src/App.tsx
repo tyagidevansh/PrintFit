@@ -19,6 +19,8 @@ import type { MarginPreset, Photo } from './types'
 
 const MIN_PER_PAGE = 1
 const MAX_PER_PAGE = 30
+const MIN_COPIES = 1
+const MAX_COPIES = 20
 
 const MARGINS: Record<MarginPreset, { label: string; value: number; note: string }> = {
   normal: { label: 'Normal', value: 12.7, note: 'Safe for every printer' },
@@ -47,6 +49,7 @@ function readPhoto(file: File): Promise<Photo> {
         width: image.naturalWidth,
         height: image.naturalHeight,
         aspect: image.naturalWidth / image.naturalHeight,
+        count: 1,
       })
     image.onerror = () => {
       URL.revokeObjectURL(url)
@@ -94,7 +97,11 @@ function App() {
   }, [])
 
   const margin = MARGINS[marginPreset].value
-  const layouts = useMemo(() => createLayouts(photos, perPage, margin), [photos, perPage, margin])
+  const expandedPhotos = useMemo(
+    () => photos.flatMap((photo) => Array.from({ length: photo.count }, (_, copyIndex) => (copyIndex === 0 ? photo : { ...photo, id: `${photo.id}__copy-${copyIndex}` }))),
+    [photos],
+  )
+  const layouts = useMemo(() => createLayouts(expandedPhotos, perPage, margin), [expandedPhotos, perPage, margin])
   const averageEfficiency = layouts.length
     ? Math.round((layouts.reduce((sum, page) => sum + page.efficiency, 0) / layouts.length) * 100)
     : 0
@@ -110,6 +117,14 @@ function App() {
   const clearPhotos = () => {
     photos.forEach((photo) => URL.revokeObjectURL(photo.url))
     setPhotos([])
+  }
+
+  const changeCopies = (id: string, delta: number) => {
+    setPhotos((current) =>
+      current.map((photo) =>
+        photo.id === id ? { ...photo, count: Math.max(MIN_COPIES, Math.min(MAX_COPIES, photo.count + delta)) } : photo,
+      ),
+    )
   }
 
   const handleSelectPreset = (value: number) => {
@@ -237,6 +252,27 @@ function App() {
                   <img src={photo.url} alt={photo.file.name} />
                   <span>{index + 1}</span>
                   <button onClick={() => removePhoto(photo.id)} aria-label={`Remove ${photo.file.name}`}><X size={12} /></button>
+                  <div className="copy-controls">
+                    <button
+                      type="button"
+                      className="copy-btn"
+                      onClick={() => changeCopies(photo.id, -1)}
+                      disabled={photo.count <= MIN_COPIES}
+                      aria-label={`Print ${photo.file.name} one fewer time`}
+                    >
+                      <Minus size={11} />
+                    </button>
+                    <span className="copy-count">{photo.count}</span>
+                    <button
+                      type="button"
+                      className="copy-btn"
+                      onClick={() => changeCopies(photo.id, 1)}
+                      disabled={photo.count >= MAX_COPIES}
+                      aria-label={`Print ${photo.file.name} one more time`}
+                    >
+                      <Plus size={11} />
+                    </button>
+                  </div>
                 </div>
               ))}
               <button className="add-more" onClick={() => fileInput.current?.click()} aria-label="Add more photos"><ImagePlus size={20} /></button>
