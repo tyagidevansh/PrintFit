@@ -5,6 +5,7 @@ export interface Photo {
   width: number
   height: number
   aspect: number
+  count: number
 }
 
 export interface PhotoPlacement {
