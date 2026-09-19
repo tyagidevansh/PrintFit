@@ -13,7 +13,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
-import { createLayouts } from './layout'
+import { createFixedSizeLayouts, createLayouts } from './layout'
 import { exportPdf } from './pdf'
 import type { MarginPreset, Photo } from './types'
 
@@ -21,6 +21,8 @@ const MIN_PER_PAGE = 1
 const MAX_PER_PAGE = 30
 const MIN_COPIES = 1
 const MAX_COPIES = 20
+const DEFAULT_FIXED_WIDTH_CM = 8.89
+const DEFAULT_FIXED_HEIGHT_CM = 6.35
 
 const MARGINS: Record<MarginPreset, { label: string; value: number; note: string }> = {
   normal: { label: 'Normal', value: 12.7, note: 'Safe for every printer' },
@@ -63,6 +65,9 @@ function App() {
   const [photos, setPhotos] = useState<Photo[]>([])
   const [perPage, setPerPage] = useState(6)
   const [customInput, setCustomInput] = useState('6')
+  const [fixedSizeOn, setFixedSizeOn] = useState(false)
+  const [fixedWidthCm, setFixedWidthCm] = useState(String(DEFAULT_FIXED_WIDTH_CM))
+  const [fixedHeightCm, setFixedHeightCm] = useState(String(DEFAULT_FIXED_HEIGHT_CM))
   const [marginPreset, setMarginPreset] = useState<MarginPreset>('narrow')
   const [dragging, setDragging] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
@@ -101,7 +106,15 @@ function App() {
     () => photos.flatMap((photo) => Array.from({ length: photo.count }, (_, copyIndex) => (copyIndex === 0 ? photo : { ...photo, id: `${photo.id}__copy-${copyIndex}` }))),
     [photos],
   )
-  const layouts = useMemo(() => createLayouts(expandedPhotos, perPage, margin), [expandedPhotos, perPage, margin])
+  const fixedWidthMm = (Number(fixedWidthCm) || DEFAULT_FIXED_WIDTH_CM) * 10
+  const fixedHeightMm = (Number(fixedHeightCm) || DEFAULT_FIXED_HEIGHT_CM) * 10
+  const layouts = useMemo(
+    () =>
+      fixedSizeOn
+        ? createFixedSizeLayouts(expandedPhotos, fixedWidthMm, fixedHeightMm, margin)
+        : createLayouts(expandedPhotos, perPage, margin),
+    [expandedPhotos, perPage, margin, fixedSizeOn, fixedWidthMm, fixedHeightMm],
+  )
   const averageEfficiency = layouts.length
     ? Math.round((layouts.reduce((sum, page) => sum + page.efficiency, 0) / layouts.length) * 100)
     : 0
@@ -282,12 +295,13 @@ function App() {
           <div className="setting-block">
             <div className="setting-title"><span className="step-number">02</span><h2>Photo size</h2></div>
             <p>About how much of a sheet should each photo use?</p>
-            <div className="segmented size-options">
+            <div className={`segmented size-options ${fixedSizeOn ? 'is-disabled' : ''}`}>
               {SIZE_OPTIONS.map((option) => (
                 <button
                   key={option.value}
                   className={perPage === option.value ? 'selected' : ''}
                   onClick={() => handleSelectPreset(option.value)}
+                  disabled={fixedSizeOn}
                 >
                   <span>{option.label}</span>
                   <small>{option.value} / page</small>
@@ -295,7 +309,7 @@ function App() {
               ))}
             </div>
 
-            <div className={`custom-count-card ${isCustomActive ? 'active' : ''}`}>
+            <div className={`custom-count-card ${isCustomActive ? 'active' : ''} ${fixedSizeOn ? 'is-disabled' : ''}`}>
               <div className="custom-count-info">
                 <label htmlFor="custom-per-page">Custom count</label>
                 <small>1–30 per sheet</small>
@@ -305,7 +319,7 @@ function App() {
                   type="button"
                   className="stepper-btn"
                   onClick={() => handleStep(-1)}
-                  disabled={perPage <= MIN_PER_PAGE}
+                  disabled={fixedSizeOn || perPage <= MIN_PER_PAGE}
                   aria-label="Decrease photos per page"
                 >
                   <Minus size={14} />
@@ -320,19 +334,66 @@ function App() {
                   onChange={handleCustomInputChange}
                   onBlur={handleCustomInputBlur}
                   onKeyDown={handleCustomKeyDown}
+                  disabled={fixedSizeOn}
                   aria-label="Custom photos per page"
                 />
                 <button
                   type="button"
                   className="stepper-btn"
                   onClick={() => handleStep(1)}
-                  disabled={perPage >= MAX_PER_PAGE}
+                  disabled={fixedSizeOn || perPage >= MAX_PER_PAGE}
                   aria-label="Increase photos per page"
                 >
                   <Plus size={14} />
                 </button>
               </div>
             </div>
+
+            <div className={`custom-count-card fixed-size-card ${fixedSizeOn ? 'active' : ''}`}>
+              <div className="custom-count-info">
+                <label htmlFor="fixed-size-toggle">Fixed print size</label>
+                <small>exact cm, no cropping</small>
+              </div>
+              <button
+                id="fixed-size-toggle"
+                type="button"
+                className={`toggle-switch ${fixedSizeOn ? 'on' : ''}`}
+                onClick={() => setFixedSizeOn((current) => !current)}
+                aria-pressed={fixedSizeOn}
+                aria-label="Toggle fixed print size"
+              >
+                <span />
+              </button>
+            </div>
+
+            {fixedSizeOn && (
+              <div className="fixed-size-inputs">
+                <label>
+                  Width
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="0.01"
+                    min="1"
+                    value={fixedWidthCm}
+                    onChange={(event) => setFixedWidthCm(event.target.value)}
+                  />
+                  cm
+                </label>
+                <label>
+                  Height
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="0.01"
+                    min="1"
+                    value={fixedHeightCm}
+                    onChange={(event) => setFixedHeightCm(event.target.value)}
+                  />
+                  cm
+                </label>
+              </div>
+            )}
           </div>
 
           <div className="setting-block">
