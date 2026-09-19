@@ -6,6 +6,8 @@ import {
   ImagePlus,
   LoaderCircle,
   LockKeyhole,
+  Minus,
+  Plus,
   RotateCcw,
   Sparkles,
   Trash2,
@@ -14,6 +16,9 @@ import {
 import { createLayouts } from './layout'
 import { exportPdf } from './pdf'
 import type { MarginPreset, Photo } from './types'
+
+const MIN_PER_PAGE = 1
+const MAX_PER_PAGE = 30
 
 const MARGINS: Record<MarginPreset, { label: string; value: number; note: string }> = {
   normal: { label: 'Normal', value: 12.7, note: 'Safe for every printer' },
@@ -26,6 +31,7 @@ const SIZE_OPTIONS = [
   { value: 4, label: '¼ page' },
   { value: 6, label: '⅙ page' },
   { value: 8, label: '⅛ page' },
+  { value: 9, label: '¹⁄₉ page' },
   { value: 12, label: '¹⁄₁₂ page' },
 ]
 
@@ -53,6 +59,7 @@ function readPhoto(file: File): Promise<Photo> {
 function App() {
   const [photos, setPhotos] = useState<Photo[]>([])
   const [perPage, setPerPage] = useState(6)
+  const [customInput, setCustomInput] = useState('6')
   const [marginPreset, setMarginPreset] = useState<MarginPreset>('narrow')
   const [dragging, setDragging] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
@@ -104,6 +111,49 @@ function App() {
     photos.forEach((photo) => URL.revokeObjectURL(photo.url))
     setPhotos([])
   }
+
+  const handleSelectPreset = (value: number) => {
+    setPerPage(value)
+    setCustomInput(String(value))
+  }
+
+  const handleStep = (delta: number) => {
+    const next = Math.max(MIN_PER_PAGE, Math.min(MAX_PER_PAGE, perPage + delta))
+    setPerPage(next)
+    setCustomInput(String(next))
+  }
+
+  const handleCustomInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = event.target.value
+    setCustomInput(raw)
+    if (raw === '') return
+    const parsed = parseInt(raw, 10)
+    if (!Number.isNaN(parsed) && parsed >= MIN_PER_PAGE && parsed <= MAX_PER_PAGE) {
+      setPerPage(parsed)
+    }
+  }
+
+  const handleCustomInputBlur = () => {
+    const parsed = parseInt(customInput, 10)
+    if (Number.isNaN(parsed) || parsed < MIN_PER_PAGE) {
+      setPerPage(MIN_PER_PAGE)
+      setCustomInput(String(MIN_PER_PAGE))
+    } else if (parsed > MAX_PER_PAGE) {
+      setPerPage(MAX_PER_PAGE)
+      setCustomInput(String(MAX_PER_PAGE))
+    } else {
+      setPerPage(parsed)
+      setCustomInput(String(parsed))
+    }
+  }
+
+  const handleCustomKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') {
+      event.currentTarget.blur()
+    }
+  }
+
+  const isCustomActive = !SIZE_OPTIONS.some((opt) => opt.value === perPage)
 
   const handleExport = async () => {
     if (!layouts.length || isExporting) return
@@ -201,12 +251,51 @@ function App() {
                 <button
                   key={option.value}
                   className={perPage === option.value ? 'selected' : ''}
-                  onClick={() => setPerPage(option.value)}
+                  onClick={() => handleSelectPreset(option.value)}
                 >
                   <span>{option.label}</span>
                   <small>{option.value} / page</small>
                 </button>
               ))}
+            </div>
+
+            <div className={`custom-count-card ${isCustomActive ? 'active' : ''}`}>
+              <div className="custom-count-info">
+                <label htmlFor="custom-per-page">Custom count</label>
+                <small>1–30 per sheet</small>
+              </div>
+              <div className="custom-count-stepper">
+                <button
+                  type="button"
+                  className="stepper-btn"
+                  onClick={() => handleStep(-1)}
+                  disabled={perPage <= MIN_PER_PAGE}
+                  aria-label="Decrease photos per page"
+                >
+                  <Minus size={14} />
+                </button>
+                <input
+                  id="custom-per-page"
+                  type="number"
+                  inputMode="numeric"
+                  min={MIN_PER_PAGE}
+                  max={MAX_PER_PAGE}
+                  value={customInput}
+                  onChange={handleCustomInputChange}
+                  onBlur={handleCustomInputBlur}
+                  onKeyDown={handleCustomKeyDown}
+                  aria-label="Custom photos per page"
+                />
+                <button
+                  type="button"
+                  className="stepper-btn"
+                  onClick={() => handleStep(1)}
+                  disabled={perPage >= MAX_PER_PAGE}
+                  aria-label="Increase photos per page"
+                >
+                  <Plus size={14} />
+                </button>
+              </div>
             </div>
           </div>
 

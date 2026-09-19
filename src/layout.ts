@@ -206,9 +206,10 @@ function optimizePage(photos: Photo[], margin: number, targetCount: number): Pag
 }
 
 export function createLayouts(photos: Photo[], perPage: number, margin: number) {
+  const safePerPage = Math.max(1, Math.floor(perPage || 1))
   const pages: PageLayout[] = []
-  for (let index = 0; index < photos.length; index += perPage) {
-    pages.push(optimizePage(photos.slice(index, index + perPage), margin, perPage))
+  for (let index = 0; index < photos.length; index += safePerPage) {
+    pages.push(optimizePage(photos.slice(index, index + safePerPage), margin, safePerPage))
   }
   return pages
 }
