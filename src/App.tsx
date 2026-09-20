@@ -4,6 +4,8 @@ import {
   Check,
   FileDown,
   ImagePlus,
+  Link2,
+  Link2Off,
   LoaderCircle,
   LockKeyhole,
   Minus,
@@ -13,7 +15,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
-import { createFixedSizeLayouts, createLayouts } from './layout'
+import { createCustomShelfLayouts, createFixedSizeLayouts, createLayouts } from './layout'
 import { exportPdf } from './pdf'
 import type { MarginPreset, Photo } from './types'
 
@@ -73,6 +75,8 @@ function App() {
   const [isExporting, setIsExporting] = useState(false)
   const [progress, setProgress] = useState(0)
   const [error, setError] = useState('')
+  const [inputOverrides, setInputOverrides] = useState<Record<string, { width: string; height: string }>>({})
+  const [unlockedPhotos, setUnlockedPhotos] = useState<Record<string, boolean>>({})
   const fileInput = useRef<HTMLInputElement>(null)
   const photosRef = useRef<Photo[]>([])
 
@@ -108,13 +112,53 @@ function App() {
   )
   const fixedWidthMm = (Number(fixedWidthCm) || DEFAULT_FIXED_WIDTH_CM) * 10
   const fixedHeightMm = (Number(fixedHeightCm) || DEFAULT_FIXED_HEIGHT_CM) * 10
-  const layouts = useMemo(
+
+  const baseLayouts = useMemo(
     () =>
       fixedSizeOn
         ? createFixedSizeLayouts(expandedPhotos, fixedWidthMm, fixedHeightMm, margin)
         : createLayouts(expandedPhotos, perPage, margin),
     [expandedPhotos, perPage, margin, fixedSizeOn, fixedWidthMm, fixedHeightMm],
   )
+
+  const baseSizes = useMemo(() => {
+    const sizes: Record<string, { width: number; height: number }> = {}
+    for (const page of baseLayouts) {
+      for (const placement of page.placements) {
+        const baseId = placement.photo.id.split('__copy-')[0]
+        if (!sizes[baseId]) {
+          sizes[baseId] = {
+            width: placement.width,
+            height: placement.height,
+          }
+        }
+      }
+    }
+    return sizes
+  }, [baseLayouts])
+
+  const overrides = useMemo(() => {
+    const parsed: Record<string, { width: number; height: number }> = {}
+    for (const [id, val] of Object.entries(inputOverrides)) {
+      const w = parseFloat(val.width)
+      const h = parseFloat(val.height)
+      if (!Number.isNaN(w) && w > 0 && !Number.isNaN(h) && h > 0) {
+        parsed[id] = { width: w, height: h }
+      }
+    }
+    return parsed
+  }, [inputOverrides])
+
+  const hasOverrides = useMemo(() => Object.keys(overrides).length > 0, [overrides])
+
+  const layouts = useMemo(() => {
+    if (hasOverrides) {
+      return createCustomShelfLayouts(expandedPhotos, overrides, baseSizes, margin)
+    } else {
+      return baseLayouts
+    }
+  }, [hasOverrides, expandedPhotos, overrides, baseSizes, margin, baseLayouts])
+
   const averageEfficiency = layouts.length
     ? Math.round((layouts.reduce((sum, page) => sum + page.efficiency, 0) / layouts.length) * 100)
     : 0
@@ -125,11 +169,167 @@ function App() {
       if (target) URL.revokeObjectURL(target.url)
       return current.filter((photo) => photo.id !== id)
     })
+    setInputOverrides((current) => {
+      const next = { ...current }
+      delete next[id]
+      return next
+    })
+    setUnlockedPhotos((current) => {
+      const next = { ...current }
+      delete next[id]
+      return next
+    })
   }
 
   const clearPhotos = () => {
     photos.forEach((photo) => URL.revokeObjectURL(photo.url))
     setPhotos([])
+    setInputOverrides({})
+    setUnlockedPhotos({})
+  }
+
+  const handleOverrideWidthChange = (photo: Photo, valueString: string) => {
+    const isUnlocked = !!unlockedPhotos[photo.id]
+
+    if (valueString === '') {
+      setInputOverrides((current) => {
+        const next = { ...current }
+        if (next[photo.id]) {
+          const defaultH = baseSizes[photo.id]
+            ? (baseSizes[photo.id].height / 10).toFixed(2)
+            : ((photo.aspect >= 1 ? 63.5 : 88.9) / 10).toFixed(2)
+          next[photo.id] = {
+            width: '',
+            height: next[photo.id].height || defaultH,
+          }
+        }
+        return next
+      })
+      return
+    }
+
+    const w = parseFloat(valueString)
+    if (!Number.isNaN(w) && w > 0) {
+      if (isUnlocked) {
+        setInputOverrides((current) => {
+          const next = { ...current }
+          const defaultH = baseSizes[photo.id]
+            ? (baseSizes[photo.id].height / 10).toFixed(2)
+            : ((photo.aspect >= 1 ? 63.5 : 88.9) / 10).toFixed(2)
+          next[photo.id] = {
+            width: valueString,
+            height: next[photo.id]?.height || defaultH,
+          }
+          return next
+        })
+      } else {
+        const h = w / photo.aspect
+        setInputOverrides((current) => ({
+          ...current,
+          [photo.id]: {
+            width: valueString,
+            height: h.toFixed(2),
+          },
+        }))
+      }
+    } else {
+      setInputOverrides((current) => ({
+        ...current,
+        [photo.id]: {
+          ...current[photo.id],
+          width: valueString,
+        },
+      }))
+    }
+  }
+
+  const handleOverrideHeightChange = (photo: Photo, valueString: string) => {
+    const isUnlocked = !!unlockedPhotos[photo.id]
+
+    if (valueString === '') {
+      setInputOverrides((current) => {
+        const next = { ...current }
+        if (next[photo.id]) {
+          const defaultW = baseSizes[photo.id]
+            ? (baseSizes[photo.id].width / 10).toFixed(2)
+            : ((photo.aspect >= 1 ? 88.9 : 63.5) / 10).toFixed(2)
+          next[photo.id] = {
+            width: next[photo.id].width || defaultW,
+            height: '',
+          }
+        }
+        return next
+      })
+      return
+    }
+
+    const h = parseFloat(valueString)
+    if (!Number.isNaN(h) && h > 0) {
+      if (isUnlocked) {
+        setInputOverrides((current) => {
+          const next = { ...current }
+          const defaultW = baseSizes[photo.id]
+            ? (baseSizes[photo.id].width / 10).toFixed(2)
+            : ((photo.aspect >= 1 ? 88.9 : 63.5) / 10).toFixed(2)
+          next[photo.id] = {
+            width: next[photo.id]?.width || defaultW,
+            height: valueString,
+          }
+          return next
+        })
+      } else {
+        const w = h * photo.aspect
+        setInputOverrides((current) => ({
+          ...current,
+          [photo.id]: {
+            width: w.toFixed(2),
+            height: valueString,
+          },
+        }))
+      }
+    } else {
+      setInputOverrides((current) => ({
+        ...current,
+        [photo.id]: {
+          ...current[photo.id],
+          height: valueString,
+        },
+      }))
+    }
+  }
+
+  const toggleAspectLock = (photo: Photo) => {
+    const nextUnlocked = !unlockedPhotos[photo.id]
+    setUnlockedPhotos((current) => ({
+      ...current,
+      [photo.id]: nextUnlocked,
+    }))
+
+    // If locking back, align height to preserve aspect based on the current width override
+    if (!nextUnlocked) {
+      const currentOverride = inputOverrides[photo.id]
+      if (currentOverride && currentOverride.width !== '') {
+        const w = parseFloat(currentOverride.width)
+        if (!Number.isNaN(w) && w > 0) {
+          const h = w / photo.aspect
+          setInputOverrides((current) => ({
+            ...current,
+            [photo.id]: {
+              width: currentOverride.width,
+              height: h.toFixed(2),
+            },
+          }))
+        }
+      }
+    }
+  }
+
+  const resetOverride = (id: string) => {
+    setInputOverrides((current) => {
+      const next = { ...current }
+      delete next[id]
+      return next
+    })
   }
 
   const changeCopies = (id: string, delta: number) => {
@@ -467,6 +667,108 @@ function App() {
               <RotateCcw size={17} />
               <div><strong>Best fit found</strong><span>Compared thousands of arrangements while keeping every photo uncropped.</span></div>
             </div>
+          )}
+        </div>
+
+        <div className="dimensions-panel">
+          <span className="preview-label">Exact Sizing</span>
+          <h2>Image sizes</h2>
+          <p>View calculated dimensions or type specific sizes in <strong>cm</strong> to customize.</p>
+
+          {!photos.length ? (
+            <div className="empty-table-state">
+              Add photos to see and customize print sizes.
+            </div>
+          ) : (
+            <table className="dimensions-table">
+              <thead>
+                <tr>
+                  <th>Photo</th>
+                  <th>Width (cm)</th>
+                  <th></th>
+                  <th>Height (cm)</th>
+                  <th style={{ width: '40px' }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {photos.map((photo, idx) => {
+                  const hasOverride = !!overrides[photo.id]
+                  const isUnlocked = !!unlockedPhotos[photo.id]
+                  const currentW = hasOverride
+                    ? inputOverrides[photo.id].width
+                    : baseSizes[photo.id]
+                    ? Number((baseSizes[photo.id].width / 10).toFixed(2))
+                    : Number(((photo.aspect >= 1 ? 88.9 : 63.5) / 10).toFixed(2))
+                  const currentH = hasOverride
+                    ? inputOverrides[photo.id].height
+                    : baseSizes[photo.id]
+                    ? Number((baseSizes[photo.id].height / 10).toFixed(2))
+                    : Number(((photo.aspect >= 1 ? 63.5 : 88.9) / 10).toFixed(2))
+
+                  return (
+                    <tr key={photo.id}>
+                      <td>
+                        <div className="table-photo-cell">
+                          <span className="table-photo-idx">{idx + 1}</span>
+                          <img src={photo.url} alt="" />
+                        </div>
+                      </td>
+                      <td>
+                        <div className="dim-input-group">
+                          <input
+                            type="number"
+                            inputMode="decimal"
+                            step="0.1"
+                            min="0.1"
+                            className={`dim-input ${hasOverride && inputOverrides[photo.id]?.width !== '' ? 'is-custom' : ''}`}
+                            value={currentW}
+                            onChange={(e) => handleOverrideWidthChange(photo, e.target.value)}
+                            aria-label={`Width for photo ${idx + 1}`}
+                          />
+                        </div>
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className={`aspect-lock-btn ${isUnlocked ? 'is-unlocked' : 'is-locked'}`}
+                          onClick={() => toggleAspectLock(photo)}
+                          title={isUnlocked ? 'Aspect ratio is unlocked. Click to lock.' : 'Aspect ratio is locked. Click to unlock.'}
+                          aria-label={isUnlocked ? 'Unlock aspect ratio' : 'Lock aspect ratio'}
+                        >
+                          {isUnlocked ? <Link2Off size={14} /> : <Link2 size={14} />}
+                        </button>
+                      </td>
+                      <td>
+                        <div className="dim-input-group">
+                          <input
+                            type="number"
+                            inputMode="decimal"
+                            step="0.1"
+                            min="0.1"
+                            className={`dim-input ${hasOverride && inputOverrides[photo.id]?.height !== '' ? 'is-custom' : ''}`}
+                            value={currentH}
+                            onChange={(e) => handleOverrideHeightChange(photo, e.target.value)}
+                            aria-label={`Height for photo ${idx + 1}`}
+                          />
+                        </div>
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="reset-dim-btn"
+                          onClick={() => resetOverride(photo.id)}
+                          disabled={!hasOverride}
+                          title="Reset to default calculated size"
+                          aria-label={`Reset size for photo ${idx + 1}`}
+                        >
+                          <RotateCcw size={13} />
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
           )}
         </div>
       </section>
