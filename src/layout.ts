@@ -213,3 +213,154 @@ export function createLayouts(photos: Photo[], perPage: number, margin: number) 
   }
   return pages
 }
+
+export function createFixedSizeLayouts(photos: Photo[], cellWidth: number, cellHeight: number, margin: number) {
+  const usableWidth = PAGE_WIDTH - margin * 2
+  const usableHeight = PAGE_HEIGHT - margin * 2
+  const longSide = Math.max(cellWidth, cellHeight)
+  const shortSide = Math.min(cellWidth, cellHeight)
+
+  const pages: PageLayout[] = []
+  let placements: PageLayout['placements'] = []
+  let x = margin
+  let y = margin
+  let shelfHeight = 0
+
+  const flushPage = () => {
+    if (!placements.length) return
+    pages.push({
+      placements,
+      efficiency: placements.reduce((sum, p) => sum + p.width * p.height, 0) / (usableWidth * usableHeight),
+      usedWidth: usableWidth,
+      usedHeight: usableHeight,
+    })
+    placements = []
+  }
+
+  for (const photo of photos) {
+    const cell = photo.aspect >= 1 ? { w: longSide, h: shortSide } : { w: shortSide, h: longSide }
+
+    if (x + cell.w > margin + usableWidth + 1e-6) {
+      x = margin
+      y += shelfHeight
+      shelfHeight = 0
+    }
+
+    if (y + cell.h > margin + usableHeight + 1e-6) {
+      flushPage()
+      x = margin
+      y = margin
+      shelfHeight = 0
+    }
+
+    let drawW = cell.w
+    let drawH = cell.h
+    if (photo.aspect > cell.w / cell.h) drawH = cell.w / photo.aspect
+    else drawW = cell.h * photo.aspect
+
+    placements.push({
+      photo,
+      x: x + (cell.w - drawW) / 2,
+      y: y + (cell.h - drawH) / 2,
+      width: drawW,
+      height: drawH,
+    })
+
+    x += cell.w
+    shelfHeight = Math.max(shelfHeight, cell.h)
+  }
+
+  flushPage()
+  return pages
+}
+
+export function createCustomShelfLayouts(
+  photos: Photo[],
+  overrides: Record<string, { width: number; height: number }>,
+  baseSizes: Record<string, { width: number; height: number }>,
+  margin: number
+) {
+  const usableWidth = PAGE_WIDTH - margin * 2
+  const usableHeight = PAGE_HEIGHT - margin * 2
+
+  const pages: PageLayout[] = []
+  let placements: PageLayout['placements'] = []
+  let x = margin
+  let y = margin
+  let shelfHeight = 0
+
+  const flushPage = () => {
+    if (!placements.length) return
+    pages.push({
+      placements,
+      efficiency: placements.reduce((sum, p) => sum + p.width * p.height, 0) / (usableWidth * usableHeight),
+      usedWidth: usableWidth,
+      usedHeight: usableHeight,
+    })
+    placements = []
+  }
+
+  for (const photo of photos) {
+    const baseId = photo.id.split('__copy-')[0]
+    let drawW: number
+    let drawH: number
+
+    if (overrides[baseId]) {
+      drawW = overrides[baseId].width * 10
+      drawH = overrides[baseId].height * 10
+    } else {
+      const base = baseSizes[baseId]
+      if (base) {
+        drawW = base.width
+        drawH = base.height
+      } else {
+        if (photo.aspect >= 1) {
+          drawW = 88.9
+          drawH = 88.9 / photo.aspect
+        } else {
+          drawH = 88.9
+          drawW = 88.9 * photo.aspect
+        }
+      }
+    }
+
+    // Cap to page printable area
+    if (drawW > usableWidth) {
+      drawH = (usableWidth / drawW) * drawH
+      drawW = usableWidth
+    }
+    if (drawH > usableHeight) {
+      drawW = (usableHeight / drawH) * drawW
+      drawH = usableHeight
+    }
+
+    // Wrap to new shelf
+    if (x + drawW > margin + usableWidth + 1e-6) {
+      x = margin
+      y += shelfHeight
+      shelfHeight = 0
+    }
+
+    // Wrap to new page
+    if (y + drawH > margin + usableHeight + 1e-6) {
+      flushPage()
+      x = margin
+      y = margin
+      shelfHeight = 0
+    }
+
+    placements.push({
+      photo,
+      x,
+      y,
+      width: drawW,
+      height: drawH,
+    })
+
+    x += drawW
+    shelfHeight = Math.max(shelfHeight, drawH)
+  }
+
+  flushPage()
+  return pages
+}
